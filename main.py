@@ -4,7 +4,10 @@ import datetime
 import database as db
 import re
 import os
+from dotenv import load_dotenv
 from menu import MainMenuView
+
+load_dotenv()
 
 # Tracker für Verstöße: {guild_id: {user_id: {modul: [zeitstempel, ...]}}}
 violation_tracker = {}
@@ -217,9 +220,10 @@ async def setup(interaction: discord.Interaction):
     view = MainMenuView()
     await interaction.response.send_message(embed=view.base_embed(), view=view)
 
-# --- START (RAILWAY SECRETS) ---
+# --- START (RAILWAY/ORACLE SECRETS) ---
 TOKEN = os.getenv("DISCORD_TOKEN")
 if TOKEN:
     bot.run(TOKEN)
 else:
-    print("❌ ERROR: No DISCORD_TOKEN found in environment variables!")
+
+    print("❌ERROR: No DISCORD_TOKEN found in environment variables or .env file!")
