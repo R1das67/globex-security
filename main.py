@@ -19,9 +19,8 @@ class GlobexBot(commands.Bot):
         super().__init__(command_prefix=None, intents=intents, help_command=None)
 
     async def setup_hook(self):
-        # Registrierung der Views für Persistenz (Buttons funktionieren ohne erneuten Befehl)
+        # Registrierung der Views für Persistenz
         self.add_view(MainMenuView())
-        # FIX: None statt 0, damit die View beim Start keine falschen Guild-Daten lädt
         self.add_view(AdmTimerView(None)) 
         self.check_adm_times.start() 
         await self.tree.sync()
@@ -31,15 +30,11 @@ class GlobexBot(commands.Bot):
         
         # --- AUTOMATISCHER RUNDRUF AN ALLE SERVER ---
         for guild in self.guilds:
-            # Suche nach dem 6. Textchannel (Index 5)
-            # Falls weniger als 6 da sind, nimm den letzten (-1)
             channels = guild.text_channels
             if not channels:
                 continue
                 
             target_channel = channels[5] if len(channels) >= 6 else channels[-1]
-            
-            # Besitzer-Erwähnung vorbereiten
             owner = guild.owner
             owner_mention = owner.mention if owner else "@Server-Eigentümer"
             
@@ -64,7 +59,7 @@ class GlobexBot(commands.Bot):
         now = datetime.datetime.now(tz_berlin).strftime("%H:%M")
         
         for guild in self.guilds:
-            data = db.get_data("adm_timer", guild.id)
+            data = await db.get_data("adm_timer", guild.id)
             if data.get("adm_status", 0) == 0:
                 continue
 
@@ -108,7 +103,7 @@ def is_limit_exceeded(guild_id, user_id, module, limit, timeframe):
 
 # --- LOGGING SYSTEM ---
 async def send_globex_log(guild_id, title, description, color=discord.Color.blue()):
-    settings = db.get_data("settings", guild_id)
+    settings = await db.get_data("settings", guild_id)
     if settings.get("log_status") == 1:
         log_cid = settings.get("log_channel")
         if log_cid and str(log_cid).isdigit():
@@ -129,7 +124,7 @@ async def send_globex_log(guild_id, title, description, color=discord.Color.blue
 async def apply_punishment(member, module_prefix, guild_id):
     if not member or not isinstance(member, discord.Member): return 
 
-    settings = db.get_data("settings", guild_id)
+    settings = await db.get_data("settings", guild_id)
     punishment = settings.get(f"{module_prefix}_punish") or "kick"
     reason_clean = module_prefix.replace('_', ' ').title()
     reason = f"Globex Security: {reason_clean} Protection"
@@ -154,7 +149,7 @@ async def apply_punishment(member, module_prefix, guild_id):
 async def on_guild_role_update(before, after):
     if before.permissions.administrator == after.permissions.administrator: return
     
-    data = db.get_data("adm_timer", after.guild.id)
+    data = await db.get_data("adm_timer", after.guild.id)
     if data.get("adm_status", 0) == 0:
         return
 
@@ -189,10 +184,12 @@ async def on_guild_role_update(before, after):
 async def on_message(message):
     if message.author.id == bot.user.id or message.webhook_id: return
     if message.author.bot or not message.guild: return
-    if message.author.id == message.guild.owner_id or db.is_on_list(message.guild.id, message.author.id, "whitelist"): return
+    
+    # WICHTIG: await db.is_on_list
+    if message.author.id == message.guild.owner_id or await db.is_on_list(message.guild.id, message.author.id, "whitelist"): return
 
-    settings = db.get_data("settings", message.guild.id)
-    limits = db.get_data("limits", message.guild.id)
+    settings = await db.get_data("settings", message.guild.id)
+    limits = await db.get_data("limits", message.guild.id)
 
     # ANTI-INVITE
     if settings.get("anti_invite_status") == 1:
@@ -220,8 +217,8 @@ async def on_message(message):
 @bot.event
 async def on_guild_channel_create(channel):
     async for entry in channel.guild.audit_logs(action=discord.AuditLogAction.channel_create, limit=1):
-        if entry.user.id in [bot.user.id, channel.guild.owner_id] or db.is_on_list(channel.guild.id, entry.user.id, "whitelist"): return
-        settings = db.get_data("settings", channel.guild.id)
+        if entry.user.id in [bot.user.id, channel.guild.owner_id] or await db.is_on_list(channel.guild.id, entry.user.id, "whitelist"): return
+        settings = await db.get_data("settings", channel.guild.id)
         if settings.get("channel_create_status") == 1:
             if settings.get("channel_create_action", "delete") == "delete":
                 try: await channel.delete()
@@ -232,16 +229,18 @@ async def on_guild_channel_create(channel):
 @bot.event
 async def on_guild_channel_delete(channel):
     async for entry in channel.guild.audit_logs(action=discord.AuditLogAction.channel_delete, limit=1):
-        if entry.user.id in [bot.user.id, channel.guild.owner_id] or db.is_on_list(channel.guild.id, entry.user.id, "whitelist"): return
-        if db.get_data("settings", channel.guild.id).get("channel_delete_status") == 1:
+        if entry.user.id in [bot.user.id, channel.guild.owner_id] or await db.is_on_list(channel.guild.id, entry.user.id, "whitelist"): return
+        settings = await db.get_data("settings", channel.guild.id)
+        if settings.get("channel_delete_status") == 1:
             member = channel.guild.get_member(entry.user.id)
             if member: await apply_punishment(member, "anti_channel_delete", channel.guild.id)
 
 @bot.event
 async def on_guild_role_create(role):
     async for entry in role.guild.audit_logs(action=discord.AuditLogAction.role_create, limit=1):
-        if entry.user.id in [bot.user.id, role.guild.owner_id] or db.is_on_list(role.guild.id, entry.user.id, "whitelist"): return
-        if db.get_data("settings", role.guild.id).get("role_create_status") == 1:
+        if entry.user.id in [bot.user.id, role.guild.owner_id] or await db.is_on_list(role.guild.id, entry.user.id, "whitelist"): return
+        settings = await db.get_data("settings", role.guild.id)
+        if settings.get("role_create_status") == 1:
             try: await role.delete()
             except: pass
             member = role.guild.get_member(entry.user.id)
@@ -250,16 +249,18 @@ async def on_guild_role_create(role):
 @bot.event
 async def on_guild_role_delete(role):
     async for entry in role.guild.audit_logs(action=discord.AuditLogAction.role_delete, limit=1):
-        if entry.user.id in [bot.user.id, role.guild.owner_id] or db.is_on_list(role.guild.id, entry.user.id, "whitelist"): return
-        if db.get_data("settings", role.guild.id).get("role_delete_status") == 1:
+        if entry.user.id in [bot.user.id, role.guild.owner_id] or await db.is_on_list(role.guild.id, entry.user.id, "whitelist"): return
+        settings = await db.get_data("settings", role.guild.id)
+        if settings.get("role_delete_status") == 1:
             member = role.guild.get_member(entry.user.id)
             if member: await apply_punishment(member, "anti_role_delete", role.guild.id)
 
 @bot.event
 async def on_webhooks_update(channel):
-    if db.get_data("settings", channel.guild.id).get("anti_webhook_status") == 1:
-        async for entry in channel.guild.audit_logs(action=discord.AuditLogAction.webhook_create, limit=1):
-            if entry.user.id in [bot.user.id, channel.guild.owner_id] or db.is_on_list(channel.guild.id, entry.user.id, "whitelist"): return
+    async for entry in channel.guild.audit_logs(action=discord.AuditLogAction.webhook_create, limit=1):
+        if entry.user.id in [bot.user.id, channel.guild.owner_id] or await db.is_on_list(channel.guild.id, entry.user.id, "whitelist"): return
+        settings = await db.get_data("settings", channel.guild.id)
+        if settings.get("anti_webhook_status") == 1:
             webhooks = await channel.webhooks()
             for wh in webhooks:
                 if wh.id == entry.target.id: 
@@ -272,12 +273,14 @@ async def on_webhooks_update(channel):
 async def on_member_join(member):
     if not member.bot: return
     gid = member.guild.id
-    if db.get_data("settings", gid).get("anti_bot_status") == 1:
+    settings = await db.get_data("settings", gid)
+    if settings.get("anti_bot_status") == 1:
         async for entry in member.guild.audit_logs(action=discord.AuditLogAction.bot_add, limit=1):
-            if entry.user.id in [gid, member.guild.owner_id] or db.is_on_list(gid, entry.user.id, "whitelist"): return
+            if entry.user.id in [gid, member.guild.owner_id] or await db.is_on_list(gid, entry.user.id, "whitelist"): return
             try: await member.kick(reason="Anti-Bot Join Protection")
             except: pass
-            l = db.get_data("limits", gid).get("bot_limit") or 1
+            limits = await db.get_data("limits", gid)
+            l = limits.get("bot_limit") or 1
             if is_limit_exceeded(gid, entry.user.id, "bot_join", l, 315360000):
                 inviter = member.guild.get_member(entry.user.id)
                 if inviter: await apply_punishment(inviter, "anti_bot_join", gid)
