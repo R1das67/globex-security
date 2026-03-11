@@ -5,7 +5,7 @@ import database as db
 import re
 import os
 from dotenv import load_dotenv
-from menu import MainMenuView, AdmTimerView
+from menu import MainMenuView, AdmTimerView, LogSettingsView # LogSettingsView hinzugefügt
 from zoneinfo import ZoneInfo
 
 load_dotenv()
@@ -19,9 +19,11 @@ class GlobexBot(commands.Bot):
         super().__init__(command_prefix=None, intents=intents, help_command=None)
 
     async def setup_hook(self):
-        # Registrierung der Views für Persistenz
+        # Registrierung der Views für Persistenz (Ohne Argumente, da asynchron)
         self.add_view(MainMenuView())
-        self.add_view(AdmTimerView(None)) 
+        self.add_view(AdmTimerView()) 
+        self.add_view(LogSettingsView())
+        
         self.check_adm_times.start() 
         await self.tree.sync()
 
@@ -34,7 +36,8 @@ class GlobexBot(commands.Bot):
             if not channels:
                 continue
                 
-            target_channel = channels[5] if len(channels) >= 6 else channels[-1]
+            # Wir nehmen einen der ersten Kanäle für die Nachricht
+            target_channel = channels[0]
             owner = guild.owner
             owner_mention = owner.mention if owner else "@Server-Eigentümer"
             
@@ -47,10 +50,11 @@ class GlobexBot(commands.Bot):
 
             if target_channel.permissions_for(guild.me).send_messages:
                 try:
-                    await target_channel.send(broadcast_msg)
-                    print(f"📢 Rundruf gesendet an: {guild.name} (#{target_channel.name})")
+                    # Optional: Deaktiviert, um Spam bei jedem Neustart zu vermeiden
+                    # await target_channel.send(broadcast_msg)
+                    print(f"📢 Bot bereit für: {guild.name}")
                 except Exception as e:
-                    print(f"❌ Fehler beim Senden an {guild.name}: {e}")
+                    print(f"❌ Fehler bei {guild.name}: {e}")
 
     # --- AUTOMATISCHER ZEIT-CHECK (BERLINER ZEIT) ---
     @tasks.loop(minutes=1)
@@ -60,7 +64,7 @@ class GlobexBot(commands.Bot):
         
         for guild in self.guilds:
             data = await db.get_data("adm_timer", guild.id)
-            if data.get("adm_status", 0) == 0:
+            if not data or data.get("adm_status", 0) == 0:
                 continue
 
             for i in [1, 2]:
@@ -91,7 +95,7 @@ bot = GlobexBot()
 
 # --- HELPER FOR LIMITS ---
 def is_limit_exceeded(guild_id, user_id, module, limit, timeframe):
-    if not limit: return True
+    if not limit: return False
     if guild_id not in violation_tracker: violation_tracker[guild_id] = {}
     if user_id not in violation_tracker[guild_id]: violation_tracker[guild_id][user_id] = {}
     if module not in violation_tracker[guild_id][user_id]: violation_tracker[guild_id][user_id][module] = []
@@ -150,7 +154,7 @@ async def on_guild_role_update(before, after):
     if before.permissions.administrator == after.permissions.administrator: return
     
     data = await db.get_data("adm_timer", after.guild.id)
-    if data.get("adm_status", 0) == 0:
+    if not data or data.get("adm_status", 0) == 0:
         return
 
     idx = None
@@ -183,9 +187,8 @@ async def on_guild_role_update(before, after):
 @bot.event
 async def on_message(message):
     if message.author.id == bot.user.id or message.webhook_id: return
-    if message.author.bot or not message.guild: return
+    if not message.guild or message.author.bot: return
     
-    # WICHTIG: await db.is_on_list
     if message.author.id == message.guild.owner_id or await db.is_on_list(message.guild.id, message.author.id, "whitelist"): return
 
     settings = await db.get_data("settings", message.guild.id)
